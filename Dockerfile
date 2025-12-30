@@ -3,22 +3,21 @@ FROM nvidia/cuda:12.9.1-runtime-ubuntu22.04
 SHELL ["/bin/bash", "-lc"]
 ENV DEBIAN_FRONTEND=noninteractive
 
+
 # --------------------------------------------------------------------
 # System deps + Python + Node (no conda, no nvm)
 # --------------------------------------------------------------------
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3 python3-venv python3-dev python3-pip \
-        build-essential net-tools jq \
-        git curl wget cmake libcurl4-openssl-dev less zip \
-        tmux htop nvtop iotop jnettop nano pciutils \
-        ca-certificates gnupg \
-        libgomp1 libnuma1 libstdc++6 && \
+      python3 python3-venv python3-dev python3-pip \
+      build-essential git curl wget cmake jq tini \
+      libcurl4-openssl-dev ca-certificates gnupg \
+      net-tools less zip nano tmux htop nvtop iotop jnettop pciutils \
+      libgomp1 libnuma1 libstdc++6 && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Make "python" point to python3
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
 # --------------------------------------------------------------------
@@ -29,7 +28,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     rm -f /root/.local/bin/uv
 
 # --------------------------------------------------------------------
-# Create venv in /opt (safe with K8s emptyDir mounted at /workspace)
+# Single venv in /opt
 # --------------------------------------------------------------------
 RUN uv venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv
@@ -38,21 +37,30 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # --------------------------------------------------------------------
-# Install PyTorch for CUDA 12.9 (do this from the cu129 index ONLY)
+# Versions
 # --------------------------------------------------------------------
-RUN uv pip install --upgrade pip setuptools wheel && \
-    uv pip install --no-cache-dir \
-      --index-url https://download.pytorch.org/whl/cu129 \
-      torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0
-# PyTorch 2.9.0 package set/version refs. :contentReference[oaicite:1]{index=1}
+ARG TORCH_VERSION=2.9.0
+ARG TORCHVISION_VERSION=0.24.0
+ARG TORCHAUDIO_VERSION=2.9.0
+ARG VLLM_VERSION=0.13.0
+ARG UNSLOTH_VERSION=2025.12.9
+ARG UNSLOTH_ZOO_VERSION=2025.12.7
 
 # --------------------------------------------------------------------
-# Install vLLM (from PyPI) + your extras (from PyPI)
-# vLLM wheels are compiled with CUDA 12.9 by default; PyTorch must match. :contentReference[oaicite:2]{index=2}
+# ONE big install, but with PyPI as primary index
 # --------------------------------------------------------------------
-RUN uv pip install --no-cache-dir \
-      vllm openai openai_harmony \
-      unsloth unsloth_zoo torch-c-dlpack-ext litellm lm_eval[hf,vllm,api] \
+RUN uv pip install --no-cache-dir --upgrade --force-reinstall \
+      --index-url https://pypi.org/simple \
+      --index-strategy unsafe-best-match \
+      --extra-index-url https://download.pytorch.org/whl/cu129 \
+      "torch==${TORCH_VERSION}+cu129" \
+      "torchvision==${TORCHVISION_VERSION}+cu129" \
+      "torchaudio==${TORCHAUDIO_VERSION}+cu129" \
+      "vllm==${VLLM_VERSION}" \
+      "unsloth==${UNSLOTH_VERSION}" \
+      "unsloth-zoo==${UNSLOTH_ZOO_VERSION}" \
+      openai openai_harmony \
+      torch-c-dlpack-ext litellm "lm_eval[hf,vllm,api]" \
       trl datasets transformers gguf sentencepiece mistral_common tf-keras \
       "httpx>=0.24.0" \
       "aiometer>=0.5.0" \
@@ -64,6 +72,7 @@ RUN uv pip install --no-cache-dir \
       "openpyxl>=3.1.0" \
       "pyarrow>=12.0.0" \
       "py-mini-racer>=0.6.0"
+
 
 # --------------------------------------------------------------------
 # Pod timeout tracker for bash prompt
